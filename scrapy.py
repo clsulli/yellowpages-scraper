@@ -3,8 +3,7 @@
 
 import requests
 from lxml import html
-import unicodecsv as csv
-import argparse
+import database.driver as query
 
 
 def parse_listing(keyword, place):
@@ -118,6 +117,7 @@ def parse_listing(keyword, place):
             print("Failed to process page")
             return []
 
+
 def find_email(listing):
     url = listing
     print("retrieving ", url)
@@ -148,30 +148,66 @@ def find_email(listing):
         except:
             return None
 
-def find_email_from_listing():
-    reader = csv.DictReader("decatur//1.csv")
-    print(reader.fieldnames)
-    print(reader.dialect)
-    # with open("decatur//1.csv", "r") as f:
-    #     all_listings = f.readlines()
-    #     print(all_listings)
+
+def find_popular_cities(state):
+    url = "https://www.yellowpages.com/state-{}".format(state)
+    print("retrieving ", url)
+
+    headers = {'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+               'Accept-Encoding': 'gzip, deflate, br',
+               'Accept-Language': 'en-GB,en;q=0.9,en-US;q=0.8,ml;q=0.7',
+               'Cache-Control': 'max-age=0',
+               'Connection': 'keep-alive',
+               'Host': 'www.yellowpages.com',
+               'Upgrade-Insecure-Requests': '1',
+               'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/64.0.3282.140 Safari/537.36'
+               }
+
+    for retry in range(1):
+        try:
+            response = requests.get(url, verify=False, headers=headers)
+            print("parsing page")
+            if response.status_code == 200:
+                parser = html.fromstring(response.text)
+                base_url = "https://www.yellowpages.com"
+                parser.make_links_absolute(base_url)
+
+                XPATH_POPULAR_CITIES = "/html/body/div/div/div/div/div[1]//text()"
+                raw_cities = parser.xpath(XPATH_POPULAR_CITIES)
+                popular_cities = raw_cities[1::]
+                for city in popular_cities:
+                    query.insert_location(city=city, state=state)
+
+                #email = ''.join(raw_email).strip() if raw_email else None
+
+        except Exception as e:
+            print('error: {}'.format(e))
+
+
+def find_all_cities():
+    with open("state-codes.txt", "r") as f:
+        states = f.readlines()
+    for state in states:
+        state = state.lower().strip('\n')
+        find_popular_cities(state)
 
 
 if __name__ == "__main__":
-    with open('categories.txt', 'r') as f:
-        category_list = f.readlines()
-    print(category_list)
-    keyword = 'restraunts'
-    keyword = keyword.strip('\n')
-    place = 'decatur, il'
-    scraped_data = parse_listing(keyword, place)
-
-    if scraped_data:
-        print("Writing scraped data to %s-%s-yellowpages-scraped-data.csv" % (keyword, place))
-        with open('%s-%s-yellowpages-scraped-data.csv' % (keyword, place), 'wb') as csvfile:
-            fieldnames = ['rank', 'business_name', 'telephone', 'email', 'business_page', 'category', 'website', 'rating',
-                          'street', 'locality', 'region', 'zipcode', 'listing_url']
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames, quoting=csv.QUOTE_ALL)
-            writer.writeheader()
-            for data in scraped_data:
-                writer.writerow(data)
+    find_all_cities()
+    # with open('categories.txt', 'r') as f:
+    #     category_list = f.readlines()
+    # print(category_list)
+    # keyword = 'restraunts'
+    # keyword = keyword.strip('\n')
+    # place = 'decatur, il'
+    # scraped_data = parse_listing(keyword, place)
+    #
+    # if scraped_data:
+    #     print("Writing scraped data to %s-%s-yellowpages-scraped-data.csv" % (keyword, place))
+    #     with open('%s-%s-yellowpages-scraped-data.csv' % (keyword, place), 'wb') as csvfile:
+    #         fieldnames = ['rank', 'business_name', 'telephone', 'email', 'business_page', 'category', 'website', 'rating',
+    #                       'street', 'locality', 'region', 'zipcode', 'listing_url']
+    #         writer = csv.DictWriter(csvfile, fieldnames=fieldnames, quoting=csv.QUOTE_ALL)
+    #         writer.writeheader()
+    #         for data in scraped_data:
+    #             writer.writerow(data)
