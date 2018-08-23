@@ -3,121 +3,109 @@
 
 import requests
 from lxml import html
-import database.driver as query
+#import database.driver as query
 from collections import deque
 import pickle
 import warnings
-from tqdm import tqdm
-from itertools import cycle
-import sys
 import json
+import math
 from settings.config import Config
 warnings.filterwarnings("ignore")
 
 
-def parse_listing(keyword, place):
+def get_total_listings(keyword, place):
+    url = "https://www.yellowpages.com/search?search_terms={0}&geo_location_terms={1}".format(keyword, place)
+    headers = Config.HEADERS
+
+    try:
+        response = requests.get(url, verify=False, headers=headers,
+            proxies={"http": Config.PROXY_ROTATOR, "https": Config.PROXY_ROTATOR})
+        if response.status_code == 200:
+            parser = html.fromstring(response.text)
+            # making links absolute
+            base_url = "https://www.yellowpages.com"
+            parser.make_links_absolute(base_url)
+
+            XPATH_TOTAL_LISTINGS = "//div[contains(@class, 'pagination')]//text()"
+            total_listings = parser.xpath(XPATH_TOTAL_LISTINGS)
+            total_listings = int(total_listings[1])
+            total_pages = math.ceil(total_listings/30)
+            return total_pages
+
+        elif response.status_code == 404:
+            print("Could not find a location matching", place)
+            # no need to retry for non existing page
+        else:
+            print("Failed to process page")
+            return []
+
+    except Exception as e:
+        print("Failed to process page: {}".format(e))
+        return []
+
+
+def parse_listing(keyword, place, page):
     """
     Function to process yellowpage listing page
     : param keyword: search query
     : param place : place name
     """
     url = "https://www.yellowpages.com/search?search_terms={0}&geo_location_terms={1}".format(keyword, place)
+    headers = Config.HEADERS
 
-    headers = {'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-               'Accept-Encoding': 'gzip, deflate, br',
-               'Accept-Language': 'en-GB,en;q=0.9,en-US;q=0.8,ml;q=0.7',
-               'Cache-Control': 'max-age=0',
-               'Connection': 'keep-alive',
-               'Host': 'www.yellowpages.com',
-               'Upgrade-Insecure-Requests': '1',
-               'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/64.0.3282.140 Safari/537.36'
-               }
     # Adding retries
-    proxy = get_proxy()
-    for retry in range(10):
-        try:
-            response = requests.get(url, verify=False, headers=headers, proxies={"http": Config.PROXY_ROTATOR, "https": Config.PROXY_ROTATOR})
-            if response.status_code == 200:
-                parser = html.fromstring(response.text)
-                # making links absolute
-                base_url = "https://www.yellowpages.com"
-                parser.make_links_absolute(base_url)
+    try:
+        response = requests.get(url, verify=False, headers=headers, proxies={"http": Config.PROXY_ROTATOR, "https": Config.PROXY_ROTATOR})
+        if response.status_code == 200:
+            parser = html.fromstring(response.text)
+            # making links absolute
+            base_url = "https://www.yellowpages.com"
+            parser.make_links_absolute(base_url)
 
-                XPATH_LISTINGS = "//div[@class='search-results organic']//div[@class='v-card']"
-                listings = parser.xpath(XPATH_LISTINGS)
-                scraped_results = []
+            XPATH_LISTINGS = "//div[@class='search-results organic']//div[@class='v-card']"
+            XPATH_TOTAL_LISTINGS = "//div[contains(@class, 'pagination')]//text()"
 
-                for results in tqdm(listings):
-                    XPATH_BUSINESS_NAME = ".//a[@class='business-name']//text()"
-                    XPATH_BUSSINESS_PAGE = ".//a[@class='business-name']//@href"
-                    XPATH_TELEPHONE = ".//div[@itemprop='telephone']//text()"
-                    # XPATH_ADDRESS = ".//div[@class='info']//div//p[@itemprop='address']"
-                    # XPATH_STREET = ".//div[@class='info']//div//p[@itemprop='address']//span[@itemprop='streetAddress']//text()"
-                    # XPATH_LOCALITY = ".//div[@class='info']//div//p[@itemprop='address']//span[@itemprop='addressLocality']//text()"
-                    # XPATH_REGION = ".//div[@class='info']//div//p[@itemprop='address']//span[@itemprop='addressRegion']//text()"
-                    # XPATH_ZIP_CODE = ".//div[@class='info']//div//p[@itemprop='address']//span[@itemprop='postalCode']//text()"
-                    # XPATH_RANK = ".//div[@class='info']//h2[@class='n']/text()"
-                    # XPATH_CATEGORIES = ".//div[@class='info']//div[contains(@class,'info-section')]//div[@class='categories']//text()"
-                    XPATH_WEBSITE = ".//div[@class='info']//div[contains(@class,'info-section')]//div[@class='links']//a[contains(@class,'website')]/@href"
-                    # XPATH_RATING = ".//div[@class='info']//div[contains(@class,'info-section')]//div[contains(@class,'result-rating')]//span//text()"
+            listings = parser.xpath(XPATH_LISTINGS)
+            total_listings = parser.xpath(XPATH_TOTAL_LISTINGS)
+            # total_listings = total_listings[1]
+            print(int(total_listings))
+            scraped_results = []
 
-                    raw_business_name = results.xpath(XPATH_BUSINESS_NAME)
-                    raw_business_telephone = results.xpath(XPATH_TELEPHONE)
-                    raw_business_page = results.xpath(XPATH_BUSSINESS_PAGE)
-                    # raw_categories = results.xpath(XPATH_CATEGORIES)
-                    raw_website = results.xpath(XPATH_WEBSITE)
-                    # raw_rating = results.xpath(XPATH_RATING)
-                    # address = results.xpath(XPATH_ADDRESS)
-                    # raw_street = results.xpath(XPATH_STREET)
-                    # raw_locality = results.xpath(XPATH_LOCALITY)
-                    # raw_region = results.xpath(XPATH_REGION)
-                    # raw_zip_code = results.xpath(XPATH_ZIP_CODE)
-                    # raw_rank = results.xpath(XPATH_RANK)
+            for results in listings:
+                XPATH_BUSINESS_NAME = ".//a[@class='business-name']//text()"
+                XPATH_BUSSINESS_PAGE = ".//a[@class='business-name']//@href"
+                XPATH_TELEPHONE = ".//div[@itemprop='telephone']//text()"
+                XPATH_WEBSITE = ".//div[@class='info']//div[contains(@class,'info-section')]//div[@class='links']//a[contains(@class,'website')]/@href"
 
-                    business_name = ''.join(raw_business_name).strip() if raw_business_name else None
-                    telephone = ''.join(raw_business_telephone).strip() if raw_business_telephone else None
-                    business_page = ''.join(raw_business_page).strip() if raw_business_page else None
-                    # rank = ''.join(raw_rank).replace('.\xa0', '') if raw_rank else None
-                    # category = ','.join(raw_categories).strip() if raw_categories else None
-                    website = ''.join(raw_website).strip() if raw_website else None
-                    # rating = ''.join(raw_rating).replace("(", "").replace(")", "").strip() if raw_rating else None
-                    # street = ''.join(raw_street).strip() if raw_street else None
-                    # locality = ''.join(raw_locality).replace(',\xa0', '').strip() if raw_locality else None
-                    # region = ''.join(raw_region).strip() if raw_region else None
-                    # zipcode = ''.join(raw_zip_code).strip() if raw_zip_code else None
+                raw_business_name = results.xpath(XPATH_BUSINESS_NAME)
+                raw_business_telephone = results.xpath(XPATH_TELEPHONE)
+                raw_business_page = results.xpath(XPATH_BUSSINESS_PAGE)
+                raw_website = results.xpath(XPATH_WEBSITE)
 
-                    if business_page is not None:
-                        email = find_email(business_page, proxy)
-                        if email is not None:
-                            email = email.replace("mailto:", "")
-                        else:
-                            email = "None"
+                business_name = ''.join(raw_business_name).strip() if raw_business_name else None
+                telephone = ''.join(raw_business_telephone).strip() if raw_business_telephone else None
+                business_page = ''.join(raw_business_page).strip() if raw_business_page else None
+                website = ''.join(raw_website).strip() if raw_website else None
 
-                    if website is None:
-                        website = "None"
-                    if telephone is None:
-                        telephone = "None"
+                business_details = {
+                    'name': business_name,
+                    'phone': telephone,
+                    'website': website,
+                    'detail_page': business_page
+                }
+                scraped_results.append(business_details)
+            return scraped_results
 
-                    business_details = {
-                        'name': business_name,
-                        'phone': telephone,
-                        'email': email,
-                        'website': website,
-                    }
-                    scraped_results.append(business_details)
-                return scraped_results
-
-            elif response.status_code == 404:
-                print("Could not find a location matching", place)
-                # no need to retry for non existing page
-                break
-            else:
-                print("Failed to process page")
-                return []
-
-        except:
+        elif response.status_code == 404:
+            print("Could not find a location matching", place)
+            # no need to retry for non existing page
+        else:
             print("Failed to process page")
             return []
+
+    except Exception as e:
+        print("Failed to process page: {}".format(e))
+        return []
 
 
 def find_email(listing):
@@ -285,6 +273,5 @@ def process_queue():
 
 
 if __name__ == "__main__":
-    load_queue()
-    process_queue()
-
+    f = get_total_listings('doctors', 'edwardsville, il')
+    print(f)
