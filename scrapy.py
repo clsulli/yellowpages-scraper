@@ -3,7 +3,7 @@
 
 import requests
 from lxml import html
-#import database.driver as query
+import database.driver as query
 from collections import deque
 import pickle
 import warnings
@@ -13,62 +13,60 @@ from settings.config import Config
 warnings.filterwarnings("ignore")
 
 
+def go(keyword, place):
+    ok, listing_amt = get_total_listings(keyword=keyword, place=place)
+    if listing_amt > 5:
+        listing_amt = 5
+    if ok and listing_amt is not 0:
+        for page in range(1, listing_amt):
+            listings = parse_listing(keyword=keyword, place=place, page=page)
+            print(listings)
+
+
 def get_total_listings(keyword, place):
     url = "https://www.yellowpages.com/search?search_terms={0}&geo_location_terms={1}".format(keyword, place)
     headers = Config.HEADERS
-
-    try:
-        response = requests.get(url, verify=False, headers=headers,
-            proxies={"http": Config.PROXY_ROTATOR, "https": Config.PROXY_ROTATOR})
-        if response.status_code == 200:
-            parser = html.fromstring(response.text)
-            # making links absolute
-            base_url = "https://www.yellowpages.com"
-            parser.make_links_absolute(base_url)
-
-            XPATH_TOTAL_LISTINGS = "//div[contains(@class, 'pagination')]//text()"
-            total_listings = parser.xpath(XPATH_TOTAL_LISTINGS)
-            total_listings = int(total_listings[1])
-            total_pages = math.ceil(total_listings/30)
-            return total_pages
-
-        elif response.status_code == 404:
-            print("Could not find a location matching", place)
-            # no need to retry for non existing page
-        else:
-            print("Failed to process page")
-            return []
-
-    except Exception as e:
-        print("Failed to process page: {}".format(e))
-        return []
-
-
-def parse_listing(keyword, place, page):
-    """
-    Function to process yellowpage listing page
-    : param keyword: search query
-    : param place : place name
-    """
-    url = "https://www.yellowpages.com/search?search_terms={0}&geo_location_terms={1}".format(keyword, place)
-    headers = Config.HEADERS
-
-    # Adding retries
+    print(url)
     try:
         response = requests.get(url, verify=False, headers=headers, proxies={"http": Config.PROXY_ROTATOR, "https": Config.PROXY_ROTATOR})
         if response.status_code == 200:
             parser = html.fromstring(response.text)
-            # making links absolute
+            base_url = "https://www.yellowpages.com"
+            parser.make_links_absolute(base_url)
+
+            XPATH_TOTAL_LISTINGS = "//div[contains(@class, 'pagination')]//text()"
+
+            total_listings = parser.xpath(XPATH_TOTAL_LISTINGS)
+            total_listings = int(total_listings[1])
+            total_pages = math.ceil(total_listings/30)
+            return True, total_pages
+
+        elif response.status_code == 404:
+            print("Could not find a location matching", place)
+            return True, 0
+        else:
+            print("Failed to process page")
+            return False, 0
+
+    except Exception as e:
+        print("Failed to process page: {}".format(e))
+        return False, 0
+
+
+def parse_listing(keyword, place, page):
+    url = "https://www.yellowpages.com/search?search_terms={0}&geo_location_terms={1}&page={2}".format(keyword, place, page)
+    headers = Config.HEADERS
+
+    try:
+        response = requests.get(url, verify=False, headers=headers, proxies={"http": Config.PROXY_ROTATOR, "https": Config.PROXY_ROTATOR})
+        if response.status_code == 200:
+            parser = html.fromstring(response.text)
             base_url = "https://www.yellowpages.com"
             parser.make_links_absolute(base_url)
 
             XPATH_LISTINGS = "//div[@class='search-results organic']//div[@class='v-card']"
-            XPATH_TOTAL_LISTINGS = "//div[contains(@class, 'pagination')]//text()"
 
             listings = parser.xpath(XPATH_LISTINGS)
-            total_listings = parser.xpath(XPATH_TOTAL_LISTINGS)
-            # total_listings = total_listings[1]
-            print(int(total_listings))
             scraped_results = []
 
             for results in listings:
@@ -94,18 +92,18 @@ def parse_listing(keyword, place, page):
                     'detail_page': business_page
                 }
                 scraped_results.append(business_details)
-            return scraped_results
+            return True, scraped_results
 
         elif response.status_code == 404:
             print("Could not find a location matching", place)
-            # no need to retry for non existing page
+            return True, []
         else:
             print("Failed to process page")
-            return []
+            return False, []
 
     except Exception as e:
         print("Failed to process page: {}".format(e))
-        return []
+        return False, []
 
 
 def find_email(listing):
@@ -273,5 +271,4 @@ def process_queue():
 
 
 if __name__ == "__main__":
-    f = get_total_listings('doctors', 'edwardsville, il')
-    print(f)
+    go('Doctors', 'Edwardsville, IL')
